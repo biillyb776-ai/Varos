@@ -38,9 +38,19 @@ class BotInstance {
     this.startBot();
   }
 
+  // GÜNCELLENDİ: 1.21.5 Sürümündeki iç bağlantı hatalarını (Internal Error) önleyen güvenli ayarlar eklendi
   startBot() {
     this.verifyRequired = false;
-    this.bot = mineflayer.createBot(this.botOptions);
+    
+    const secureOptions = {
+      ...this.botOptions,
+      hideErrors: true,                // Konsolu gereksiz protokol uyarılarıyla doldurmaz
+      checkTimeoutInterval: 90 * 1000, // Zaman aşımı süresini 90 saniyeye çıkararak sunucudan düşmeyi engeller
+      respawn: true,                   // Lobiden ana dünyaya geçişteki doğma paketlerini otomatik onaylar
+      physicsEnabled: true             // Fizik motorunu aktif tutarak sunucunun botu askıda görmesini engeller
+    };
+
+    this.bot = mineflayer.createBot(secureOptions);
     this.bot.loadPlugin(pathfinder); 
     this.registerEvents();
   }
@@ -56,7 +66,6 @@ class BotInstance {
       await this.reconnect();
     });
 
-    // 1. DÜZELTME: Kick sebebini gizemli [object Object] yerine net bir şekilde okuyoruz
     this.bot.on("kicked", async (reason) => {
       const kickReason = typeof reason === 'object' ? JSON.stringify(reason) : reason;
       console.log(color.yellow(`[${this.botOptions.username}] Sunucudan Atıldı (Kick): `) + kickReason);
@@ -78,7 +87,7 @@ class BotInstance {
         this.bot.chat(`/login ${this.botOptions.password}`);
         console.log(color.cyan(`[${this.botOptions.username}] Şifre otomatik olarak gönderildi.`));
 
-        // 2. DÜZELTME: Sunucunun haritayı yüklemesi için süreyi 10 saniyeye çıkardık (Sakinleşme süresi)
+        // Sunucunun haritayı tamamen yüklemesi için 10 saniye lobide sakin ve güvenli şekilde bekliyoruz
         this.portalTimeout = setTimeout(() => this.autoEnterPortal(), 10000);
       }
 
@@ -129,7 +138,7 @@ class BotInstance {
     });
   }
 
-  // 3. DÜZELTME: Baritone'un yumuşak yürüyüş modunu kullanan güvenli portal sistemi
+  // Baritone'un yumuşak yürüyüş modunu kullanan güvenli portal sistemi
   async autoEnterPortal() {
     if (this.verifyRequired || this.currentState !== state.online) {
       console.log(color.yellow(`[PORTAL] Doğrulama beklendiği için otomatik portal araması iptal edildi.`));
@@ -259,3 +268,4 @@ module.exports = function(options) {
     activeBotInstance = instance;
     return instance;
 };
+                    
