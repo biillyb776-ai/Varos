@@ -56,8 +56,10 @@ class BotInstance {
       await this.reconnect();
     });
 
+    // 1. DÜZELTME: Kick sebebini gizemli [object Object] yerine net bir şekilde okuyoruz
     this.bot.on("kicked", async (reason) => {
-      console.log(color.yellow(`[${this.botOptions.username}] Sunucudan Atıldı (Kick): `) + reason);
+      const kickReason = typeof reason === 'object' ? JSON.stringify(reason) : reason;
+      console.log(color.yellow(`[${this.botOptions.username}] Sunucudan Atıldı (Kick): `) + kickReason);
     });
 
     this.bot.on("death", () => {
@@ -72,12 +74,12 @@ class BotInstance {
 
       // ŞİFRE GİRİŞİ YAPMA (İlk Giriş - Lobi)
       if (this.spawned == 1) {
-        await sleep(1500);
+        await sleep(2000); 
         this.bot.chat(`/login ${this.botOptions.password}`);
         console.log(color.cyan(`[${this.botOptions.username}] Şifre otomatik olarak gönderildi.`));
 
-        // Giriş yaptıktan sonra 6 saniye bekle, verify gelmezse otomatik portala koşmayı dene
-        this.portalTimeout = setTimeout(() => this.autoEnterPortal(), 6000);
+        // 2. DÜZELTME: Sunucunun haritayı yüklemesi için süreyi 10 saniyeye çıkardık (Sakinleşme süresi)
+        this.portalTimeout = setTimeout(() => this.autoEnterPortal(), 10000);
       }
 
       // Ana Dünyaya Geçiş (Spawn 2 veya daha fazlası)
@@ -110,7 +112,6 @@ class BotInstance {
         if (this.portalTimeout) {
           clearTimeout(this.portalTimeout);
         }
-        // Eğer Baritone şu an portala koşuyorsa onu da durdur
         if (this.bot.ashfinder) {
           this.bot.ashfinder.stop();
         }
@@ -128,7 +129,7 @@ class BotInstance {
     });
   }
 
-  // AKILLI OTOMATİK PORTAL BULMA VE İÇİNE GİRME FONKSİYONU
+  // 3. DÜZELTME: Baritone'un yumuşak yürüyüş modunu kullanan güvenli portal sistemi
   async autoEnterPortal() {
     if (this.verifyRequired || this.currentState !== state.online) {
       console.log(color.yellow(`[PORTAL] Doğrulama beklendiği için otomatik portal araması iptal edildi.`));
@@ -138,7 +139,6 @@ class BotInstance {
     console.log(color.cyan(`[PORTAL] Çevredeki portal blokları taranıyor...`));
 
     try {
-      // Botun etrafındaki 32 blokluk alanda portal bloklarını aratıyoruz
       const portalBlocks = this.bot.findBlocks({
         matching: (block) => block.name === 'nether_portal' || block.name === 'portal',
         maxDistance: 32,
@@ -148,32 +148,30 @@ class BotInstance {
       if (portalBlocks.length > 0) {
         const portalPos = portalBlocks[0];
         console.log(color.green(`[PORTAL] Portal bulundu! Koordinat: X:${portalPos.x} Y:${portalPos.y} Z:${portalPos.z}`));
-        console.log(color.cyan(`[PORTAL] Baritone portalın içine doğru harekete geçiyor...`));
+        console.log(color.cyan(`[PORTAL] Baritone yumuşak yürüyüş modunda portala gidiyor...`));
         
-        // Baritone'a portalın tam koordinatını hedef olarak veriyoruz
-        const goal = new goals.GoalExact(portalPos);
-        await this.bot.ashfinder.goto(goal);
+        if (this.bot.ashfinder) {
+          const goal = new goals.GoalExact(portalPos);
+          await this.bot.ashfinder.goto(goal);
+        }
       } else {
-        // Eğer etrafta portal bloku bulamazsa eski düz yürüme sistemini yedek olarak çalıştırır
         console.log(color.yellow(`[PORTAL] Yakında portal bloku tespit edilemedi! Yedek düz yürüme başlatılıyor...`));
         this.walkToPortalBackup();
       }
     } catch (err) {
-      console.log(color.red(`[PORTAL HATA] Portal aranırken bir sorun oluştu, düz yürünüyor.`), err);
+      console.log(color.red(`[PORTAL HATA] Portal aranırken bir sorun oluştu, düz yürünüyor.`));
       this.walkToPortalBackup();
     }
   }
 
-  // Yedek Düz Yürüme Sistemi (Eğer lobi haritası yüklenmediyse veya blok bulunamadıysa)
+  // Yedek Düz Yürüme Sistemi (Korumaya takılmaması için sadece düz ileri gider)
   walkToPortalBackup() {
     if (this.verifyRequired || this.currentState !== state.online) return;
     
     this.bot.setControlState("forward", true);
-    this.bot.setControlState("jump", true);
 
     setTimeout(() => {
       this.bot.setControlState("forward", false);
-      this.bot.setControlState("jump", false);
       console.log(color.cyan(`[PORTAL] Yedek lobi hareketi bitti.`));
     }, 5000);
   }
@@ -261,4 +259,3 @@ module.exports = function(options) {
     activeBotInstance = instance;
     return instance;
 };
-
