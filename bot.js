@@ -46,16 +46,16 @@ class BotInstance {
     const secureOptions = {
       ...this.botOptions,
       hideErrors: true,                
-      checkTimeoutInterval: 120 * 1000, 
+      checkTimeoutInterval: 120 * 1000, // Zaman aşımı süresi yüksek tutulur (İnternet forumu tavsiyesi)
       respawn: true,                   
-      physicsEnabled: true, // Başlangıçta açık, transferde kapatacağız
+      physicsEnabled: true,            
       resetErrorChannels: true,
-      skipValidation: true,
+      skipValidation: true, // Hatalı paketleri sunucuya çaktırmadan yutar
       waitWindowCloseTimeout: 5000,
       chatSignature: false,
       clientSignature: false,
       brand: "vanilla",
-      viewDistance: "tiny"
+      viewDistance: "tiny" // Sunucudan az veri talep ederek donmayı önler
     };
 
     this.bot = mineflayer.createBot(secureOptions);
@@ -64,27 +64,24 @@ class BotInstance {
   }
 
   registerEvents() {
-    // KESİN ÇÖZÜM (Issue #3776 & PR #3722): 
-    // Sunucu transfer paketi gönderdiği an (Lobi -> Ana dünya geçişi) fizik motorunu kapatır.
-    // Böylece configuration modunda paket gönderilip Velocity tarafından kicklenmesi engellenir.
-    this.bot.on("playerLeft", (player) => {
-      if (player.username === this.botOptions.username) {
-        this.isPortaling = true; 
+    // İNTERNET ÇÖZÜMÜ: Sunucu botu ana dünyaya aktarırken (respawn paketi attığında) 
+    // fizikleri güvenli bir şekilde kapatıp açarak "Internal Error" krizini önler.
+    this.bot._client.on('packet', (data, metadata) => {
+      // Boyut değiştirme veya konfigürasyona geri dönme paketleri yakalandığında
+      if (metadata.name === 'respawn' || metadata.name === 'start_configuration') {
+        this.isPortaling = true;
         if (this.portalTimeout) clearTimeout(this.portalTimeout);
         this.clearAllMovements();
         
-        console.log(color.magenta(`[ISSUE #3776 BYPASS] Sunucu transferi başladı. Fizik motoru kapatılıyor...`));
-        
-        // Mineflayer fizik döngüsünü durduruyoruz
         if (this.bot.physics) {
           this.bot.physicsEnabled = false;
+          console.log(color.magenta(`[INTERNET BYPASS] Sunucu geçiş paketi (${metadata.name}) yakalandı. Fizik donduruldu.`));
         }
       }
     });
 
-    // RESOURCE PACK DESTEĞİ (#3659)
+    // RESOURCE PACK ONAYLAYICI
     this.bot.on('resourcePackSend', (url, hash, required, message) => {
-      console.log(color.magenta(`[RESOURCE PACK] İstek onaylanıyor...`));
       try {
         this.bot.acceptResourcePack();
       } catch (e) {
@@ -96,18 +93,18 @@ class BotInstance {
     });
 
     this.bot.on("error", async (error) => {
-      console.log(color.yellow(`[${this.botOptions.username}] Hata: `) + error.message);
+      console.log(color.yellow(`[${this.botOptions.username}] Hata Yakalandı: `) + error.message);
       await this.reconnect();
     });
 
     this.bot.on("end", async (reason) => {
-      console.log(color.yellow(`[${this.botOptions.username}] Bağlantı Kesildi: `) + reason);
+      console.log(color.yellow(`[${this.botOptions.username}] Bağlantı sonlandı (End): `) + reason);
       await this.reconnect();
     });
 
     this.bot.on("kicked", async (reason) => {
       const kickReason = typeof reason === 'object' ? JSON.stringify(reason) : reason;
-      console.log(color.red(`[${this.botOptions.username}] Atıldı (Kick): `) + kickReason);
+      console.log(color.red(`[${this.botOptions.username}] Sunucudan Atıldı (Kick): `) + kickReason);
     });
 
     this.bot.on("death", () => {
@@ -121,7 +118,7 @@ class BotInstance {
 
       console.log(color.green(`[${this.botOptions.username}] Dünyaya giriş yaptı (Spawn: ${this.spawned})`));
 
-      // Yeni dünyaya başarıyla spawn olunduğunda fizikleri geri açıyoruz
+      // Dünyaya başarıyla spawn olunduğu an fizik motorunu güvenle tekrar aktif ediyoruz
       if (this.bot.physics) {
         this.bot.physicsEnabled = true;
       }
@@ -132,7 +129,6 @@ class BotInstance {
         await sleep(3500); 
         
         if (this.currentState === state.online) {
-          // Ham paket şeklinde komut gönderme (Güvenli yöntem)
           try {
             if (this.bot._client) {
               this.bot._client.write('chat_command', {
@@ -150,7 +146,7 @@ class BotInstance {
           } catch(e) {
             this.bot.chat(`/login ${this.botOptions.password}`);
           }
-          console.log(color.cyan(`[${this.botOptions.username}] Şifre korumalı kanaldan gönderildi.`));
+          console.log(color.cyan(`[${this.botOptions.username}] Şifre başarıyla gönderildi.`));
           
           this.portalTimeout = setTimeout(() => this.autoEnterPortal(), 12000);
         }
@@ -163,7 +159,7 @@ class BotInstance {
           const players = Object.values(this.bot.players).filter(
             (p) => p.username !== this.botOptions.username
           );
-          console.log(color.green(`[BAŞARILI] Ana dünyaya tamamen giriş yapıldı! Aktif Oyuncu sayısı: ${players.length}`));
+          console.log(color.green(`[BAŞARILI] Ana dünyaya tamamen oturuldu! Çevrimiçi oyuncu: ${players.length}`));
           sentPlayercount = true;
         }
       }
@@ -186,12 +182,12 @@ class BotInstance {
         this.clearAllMovements();
 
         console.log(color.red("\n========================================"));
-        console.log(`⚠️  [${this.botOptions.username}] DOĞRULAMA GEREKLİ! PORTAL DURDURULDU.`);
+        console.log(`⚠️  [${this.botOptions.username}] DOĞRULAMA GEREKLİ! OTOMATİK PORTAL DURDURULDU.`);
         console.log("========================================\n");
       }
 
       if (msg.includes("/register") && this.spawned == 1) {
-        console.log(color.red(`[HATA] Kayıt hatası veya yanlış şifre!`));
+        console.log(color.red(`[HATA] ${this.botOptions.username} hesabı sunucuya kayıtlı değil veya şifre yanlış!`));
         process.exit();
       }
     });
@@ -201,7 +197,7 @@ class BotInstance {
     if (this.verifyRequired || this.currentState !== state.online || this.isPortaling) return;
 
     this.isPortaling = true; 
-    console.log(color.cyan(`[PORTAL] Portallar aranıyor...`));
+    console.log(color.cyan(`[PORTAL] Çevredeki portal blokları taranıyor...`));
 
     try {
       const portalBlocks = this.bot.findBlocks({
@@ -212,7 +208,7 @@ class BotInstance {
 
       if (portalBlocks.length > 0) {
         const portalPos = portalBlocks[0];
-        console.log(color.green(`[PORTAL] Bulundu koordinat: X:${portalPos.x} Y:${portalPos.y} Z:${portalPos.z}`));
+        console.log(color.green(`[PORTAL] Portal bulundu! Koordinat: X:${portalPos.x} Y:${portalPos.y} Z:${portalPos.z}`));
         
         if (this.bot.ashfinder) {
           const goal = new goals.GoalExact(portalPos);
@@ -249,7 +245,7 @@ class BotInstance {
     const maxMotionDelay = 1000;
     while (this.currentState === state.online && !this.verifyRequired && !this.isPortaling) {
       try {
-        if (!this.bot.physicsEnabled) break; // Eğer fizik kapalıysa hareket paketini engelle
+        if (!this.bot.physicsEnabled) break;
         if (getRandomBoolean()) {
           this.bot.setControlState("jump", true);
           await sleep(randomInt(50, maxMotionDelay));
@@ -279,7 +275,8 @@ class BotInstance {
 
     this.spawned = 0;
     const delay = this.botOptions.reconnectDelay || 60000; 
-    console.log(color.yellow(`[YENİDEN BAĞLANTI] ${delay / 1000} saniye bekleniyor...`));
+    console.log(color.yellow(`[YENİDEN BAĞLANTI] Bot ${delay / 1000} saniye sonra tekrar bağlanacak...`));
+    
     await sleep(delay);
     this.startBot();
   }
@@ -299,6 +296,7 @@ rl.on('line', async (line) => {
     if (input.startsWith('#')) {
         const args = input.substring(1).split(' ');
         const cmd = args[0].toLowerCase();
+
         try {
             if (cmd === 'goto' && args.length >= 4) {
                 const x = parseInt(args[1]);
@@ -322,4 +320,3 @@ module.exports = function(options) {
     activeBotInstance = instance;
     return instance;
 };
-
