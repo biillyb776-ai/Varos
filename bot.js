@@ -1,91 +1,123 @@
 const mineflayer = require("mineflayer");
-const pathfinder = require('@miner-org/mineflayer-baritone').loader;
+// Baritone eklentisini sorunsuz yüklemek için standart tanımlama
+const baritone = require('@miner-org/mineflayer-baritone'); 
 const color = require("colors");
 
 class ProBot {
     constructor(options) {
         this.options = options;
         this.isExecuting = false;
+        this.portalTimer = null; // Döngüyü kontrol etmek için timer ekledik
         this.init();
     }
 
     init() {
-        this.bot = mineflayer.createBot({ 
-            ...this.options, 
-            hideErrors: true, 
-            checkTimeoutInterval: 120000 
-        });
-        this.bot.loadPlugin(pathfinder);
+        this.bot = mineflayer.createBot({ ...this.options, hideErrors: true });
+        this.bot.loadPlugin(baritone); // Baritone eklentisini doğru yükle
         this.setupEvents();
     }
 
     // --- HATA GEÇİRMEZ HAREKET MOTORU ---
-    // Baritone/Pathfinder çalışırken bot koparsa kodun çökmesini engeller
     safeControl(action, state) {
-        if (this.bot && this.bot.setControlState) {
+        if (this.bot && this.bot.controlState) {
             try {
                 this.bot.setControlState(action, state);
-            } catch (e) { /* Hata yutuldu, sistem devam eder */ }
+            } catch (e) { /* Hata yutuldu */ }
         }
+    }
+
+    // Tüm hareketleri anlık olarak sıfırlama fonksiyonu
+    clearMovement() {
+        const actions = ["forward", "back", "left", "right", "jump", "sprint"];
+        actions.forEach(action => this.safeControl(action, false));
     }
 
     setupEvents() {
         this.bot.on("spawn", async () => {
-            console.log(color.green(`[BOT] Giriş yaptı. Baritone/Pathfinder aktif.`));
-            setTimeout(() => this.bot.chat(`/login ${this.options.password}`), 3000);
-            this.startPortalRoutine();
+            console.log(color.green(`[BOT] ${this.bot.username} Sunucuya/Dünyaya giriş yaptı.`));
+            
+            // Her spawn olduğunda eski portal arama döngüsünü temizle (Çakışmayı önler)
+            if (this.portalTimer) clearInterval(this.portalTimer);
+            this.isExecuting = false;
+
+            // Giriş komutu
+            setTimeout(() => {
+                if (this.bot && this.bot.chat) {
+                    this.bot.chat(`/login ${this.options.password}`);
+                }
+            }, 3000);
+
+            // Portal aramayı başlat
+            this.startPortalBehavior();
         });
-        
+
         this.bot.on("end", () => {
-            console.log(color.yellow(`[SİSTEM] Bağlantı koptu, 10s sonra yeniden deneniyor...`));
-            setTimeout(() => this.init(), 10000);
+            if (this.portalTimer) clearInterval(this.portalTimer);
+            console.log(color.red("[BOT] Bağlantı kesildi, 5 saniye sonra yeniden denenecek..."));
+            setTimeout(() => this.init(), 5000);
         });
     }
 
-    startPortalRoutine() {
-        // Portal arama döngüsü
-        const routine = setInterval(() => {
+    startPortalBehavior() {
+        this.portalTimer = setInterval(() => {
+            // Bot hazır değilse veya zaten portala giriş eylemi yapıyorsa arama
             if (!this.bot || !this.bot.entity || this.isExecuting) return;
 
+            // Minecraft'ta portal blok isimleri sürüme göre 'nether_portal' veya 'portal' olabilir
             const portal = this.bot.findBlock({
-                matching: (b) => b.name === 'nether_portal' || b.name === 'portal',
+                matching: (b) => b && (b.name === 'nether_portal' || b.name === 'portal'),
                 maxDistance: 32
             });
 
             if (portal) {
                 const dist = this.bot.entity.position.distanceTo(portal.position);
+                
+                // Portala doğru bak (Kafayı portala çevir)
                 this.bot.lookAt(portal.position.offset(0, 1, 0));
 
-                if (dist < 1.3) {
-                    // PORTALA VARINCA TİTREŞİMLİ GİRİŞİ BAŞLAT
+                // Portala yeterince yakın mıyız? (Mesafe toleransı 1.5 olarak güncellendi)
+                if (dist <= 1.5) {
+                    this.clearMovement(); // Yürümeyi durdur ki titreşim düzgün çalışsın
                     this.perform6b6tEntry();
                 } else {
-                    // BARITONE YOL BULMA İLE İLERLE
+                    // Portala doğru koş ve ilerle
                     this.safeControl("forward", true);
                     this.safeControl("sprint", true);
                 }
+            } else {
+                // Eğer etrafta portal yoksa botun boşa koşmasını engelle
+                this.clearMovement();
             }
         }, 500);
     }
 
-    // 6b6t BOTLARININ O MEŞHUR GİRİŞ DAVRANIŞI
+    // 6b6t BOTLARININ O MEŞHUR "TİTREŞİMLİ" GİRİŞİ
     perform6b6tEntry() {
-        if (this.isExecuting) return;
         this.isExecuting = true;
-        
-        console.log(color.magenta(`[6b6t] Portal girişi tetiklendi (Titreşim modu)...`));
+        console.log(color.magenta(`[6b6t] Portalın içine girildi, titreşim mekanizması tetiklendi...`));
         
         let count = 0;
         const interval = setInterval(() => {
-            // İleri ve geri tuşlarına kısa aralıklarla basarak "tık tık" etkisi yarat
+            if (!this.bot) {
+                clearInterval(interval);
+                return;
+            }
+
+            // İleri ve geri tuşlarına milisaniyelik aralarla bas-çek yaparak glitch oluşturur
             this.safeControl("forward", count % 2 === 0);
             this.safeControl("back", count % 2 !== 0);
             
             count++;
-            if (count > 15) {
+            // 20 kez titredikten sonra (yaklaşık 4 saniye) durur ve sunucunun aktarmasını bekler
+            if (count > 20) {
                 clearInterval(interval);
-                this.isExecuting = false;
+                this.clearMovement(); // Hareketi tamamen sıfırla
                 console.log(color.bgGreen.black(`!! BAŞARILI: PORTALDA AKTARIM BEKLENİYOR !!`));
+                
+                // Sunucu geçiş yapana kadar botun tekrar hareket etmesini engellemek için 10 saniye bekleme kilidi
+                setTimeout(() => {
+                    this.isExecuting = false;
+                }, 10000);
             }
         }, 200);
     }
