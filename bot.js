@@ -1,86 +1,134 @@
 const mineflayer = require("mineflayer");
-const pathfinder = require('@miner-org/mineflayer-baritone').loader; 
-const goals = require('@miner-org/mineflayer-baritone').goals;       
+const pathfinder = require('@miner-org/mineflayer-baritone').loader;
+const goals = require('@miner-org/mineflayer-baritone').goals;
 const color = require("colors");
-const readline = require('readline'); 
+const readline = require('readline');
+const { Vec3 } = require('vec3');
+
+// --- SİSTEM AYARLARI ---
+const CONFIG = {
+    checkInterval: 1000,
+    portalDistance: 1.5,
+    reconnectDelay: 10000,
+    spamFilter: 5000 // Aynı mesajı engelleme süresi
+};
 
 const sleep = (toMs) => new Promise((r) => setTimeout(r, toMs));
 
-const state = { offline: "offline", online: "online", reconnecting: "reconnecting", dead: "dead" };
-
-class BotInstance {
-  constructor(botOptions) {
-    this.botOptions = botOptions;
-    this.spawned = 0;
-    this.currentState = state.offline;
-    this.isPortaling = false;
-    this.forceWalkInterval = null;
-    this.startBot();
-  }
-
-  startBot() {
-    this.bot = mineflayer.createBot({ ...this.botOptions, hideErrors: true, physicsEnabled: true });
-    this.bot.loadPlugin(pathfinder);
-    this.registerEvents();
-  }
-
-  registerEvents() {
-    this.bot.on("spawn", async () => {
-      this.spawned++;
-      this.currentState = state.online;
-      console.log(color.green(`[${this.botOptions.username}] Giriş yaptı.`));
-
-      if (this.spawned == 1) {
-        await sleep(3500);
-        this.bot.chat(`/login ${this.botOptions.password}`);
-        this.goToPortal();
-      }
-    });
-
-    this.bot.on("messagestr", (msg) => console.log(color.white(msg)));
-    this.bot.on("end", () => this.reconnect());
-  }
-
-  async goToPortal() {
-    const portalBlocks = this.bot.findBlocks({
-      matching: (block) => block.name === 'nether_portal' || block.name === 'portal',
-      maxDistance: 32,
-      count: 1
-    });
-
-    if (portalBlocks.length > 0) {
-      const portalPos = portalBlocks[0];
-      console.log(color.cyan(`[RADAR] Portal bulundu: X:${portalPos.x} Y:${portalPos.y} Z:${portalPos.z}`));
-      
-      this.bot.lookAt(portalPos.offset(0, 1, 0), true);
-      this.bot.setControlState("forward", true);
-      this.bot.setControlState("sprint", true);
-
-      this.forceWalkInterval = setInterval(() => {
-        if (!this.bot.entity) return;
-        
-        // EKRAN GÖRÜNTÜSÜ GİBİ SÜREKLİ GÜNCEL KONUM BİLGİSİ
-        const pos = this.bot.entity.position;
-        process.stdout.write(color.yellow(`\r[CANLI TAKİP] Konum: X:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} | Portala yürüyor...`));
-
-        if (pos.distanceTo(portalPos) <= 1.5) {
-          clearInterval(this.forceWalkInterval);
-          // BAŞARI BİLDİRİMİ
-          console.log(color.bgGreen.black(`\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!`));
-          console.log(color.bgGreen.black(`!!   BAŞARILI! BOT PORTALIN İÇİNE GİRDİ!        !!`));
-          console.log(color.bgGreen.black(`!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n`));
-          this.isPortaling = true;
-        }
-      }, 500);
-    } else {
-      setTimeout(() => this.goToPortal(), 2000);
+class AdvancedBot {
+    constructor(options) {
+        this.options = options;
+        this.lastMsg = "";
+        this.msgTime = 0;
+        this.isPortaling = false;
+        this.spawned = 0;
+        this.init();
     }
-  }
 
-  reconnect() {
-    clearInterval(this.forceWalkInterval);
-    setTimeout(() => this.startBot(), 5000);
-  }
+    init() {
+        this.bot = mineflayer.createBot({
+            ...this.options,
+            hideErrors: true,
+            checkTimeoutInterval: 60000
+        });
+        this.bot.loadPlugin(pathfinder);
+        this.setupEvents();
+    }
+
+    setupEvents() {
+        this.bot.on("spawn", async () => {
+            this.spawned++;
+            console.log(color.green(`[SİSTEM] Bot lobiye giriş yaptı. (Spawn Count: ${this.spawned})`));
+            
+            if (this.spawned === 1) {
+                await sleep(3000);
+                this.bot.chat(`/login ${this.options.password}`);
+                console.log(color.cyan(`[LOGIN] Kimlik doğrulama gönderildi.`));
+                this.monitorPortal();
+            }
+        });
+
+        this.bot.on("messagestr", (msg) => this.handleMessage(msg));
+        this.bot.on("end", (reason) => {
+            console.log(color.yellow(`[BAĞLANTI] Kesildi: ${reason}. Yeniden bağlanılıyor...`));
+            setTimeout(() => this.init(), CONFIG.reconnectDelay);
+        });
+
+        this.bot.on("error", (err) => console.log(color.red(`[HATA] ${err.message}`)));
+    }
+
+    handleMessage(msg) {
+        const now = Date.now();
+        // Spam engelleyici (Eğer son mesajla aynıysa ve 5 saniye geçmediyse basma)
+        if (msg === this.lastMsg && (now - this.msgTime) < CONFIG.spamFilter) return;
+        
+        this.lastMsg = msg;
+        this.msgTime = now;
+
+        if (msg.toLowerCase().includes("login") || msg.toLowerCase().includes("şifre")) {
+            this.bot.chat(`/login ${this.options.password}`);
+        }
+        process.stdout.write(color.white(`\r[CHAT] ${msg.substring(0, 50)}...\n`));
+    }
+
+    async monitorPortal() {
+        const check = setInterval(async () => {
+            if (this.isPortaling || !this.bot.entity) return;
+
+            const portal = this.bot.findBlock({
+                matching: (b) => b.name === 'nether_portal' || b.name === 'portal',
+                maxDistance: 32
+            });
+
+            if (portal) {
+                clearInterval(check);
+                this.executePrecisionEntry(portal);
+            } else {
+                process.stdout.write(color.yellow(`\r[RADAR] Portal aranıyor... X: ${this.bot.entity.position.x.toFixed(0)} Z: ${this.bot.entity.position.z.toFixed(0)}`));
+            }
+        }, CONFIG.checkInterval);
+    }
+
+    async executePrecisionEntry(portal) {
+        console.log(color.bgGreen.black(`\n[HEDEF] Portal tespit edildi: ${portal.position}`));
+        
+        // Hassas Hareket Başlangıcı
+        this.bot.lookAt(portal.position.offset(0, 1, 0), true);
+        this.bot.setControlState("forward", true);
+        this.bot.setControlState("sprint", true);
+
+        const entryLoop = setInterval(() => {
+            if (!this.bot.entity) return;
+            const dist = this.bot.entity.position.distanceTo(portal.position);
+            
+            // Titreşimli Giriş Mekaniği
+            if (dist <= CONFIG.portalDistance) {
+                this.isPortaling = true;
+                this.performVibration();
+            } else {
+                this.bot.setControlState("forward", true);
+            }
+        }, 100);
+    }
+
+    performVibration() {
+        console.log(color.magenta(`[GİRİŞ] Portal bölgesine girildi, titreşimli aktarım başlatılıyor...`));
+        let count = 0;
+        const vib = setInterval(() => {
+            this.bot.setControlState("forward", !this.bot.controlState.forward);
+            this.bot.setControlState("back", !this.bot.controlState.forward);
+            
+            count++;
+            if (count > 20) {
+                clearInterval(vib);
+                console.log(color.bgMagenta.white(`\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!`));
+                console.log(color.bgMagenta.white(`!!      İŞLEM TAMAMLANDI: PORTALDA BEKLENİYOR   !!`));
+                console.log(color.bgMagenta.white(`!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n`));
+            }
+        }, 300);
+    }
 }
 
-module.exports = (options) => new BotInstance(options);
+// Bot Başlatıcı
+module.exports = (options) => new AdvancedBot(options);
+a
