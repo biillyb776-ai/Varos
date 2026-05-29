@@ -2,41 +2,35 @@ const mineflayer = require("mineflayer");
 const pathfinder = require('@miner-org/mineflayer-baritone').loader;
 const color = require("colors");
 
-class AdvancedBot {
+class PlayerBot {
     constructor(options) {
         this.options = options;
         this.init();
     }
 
     init() {
-        this.bot = mineflayer.createBot({ ...this.options, hideErrors: true });
+        this.bot = mineflayer.createBot({ 
+            ...this.options, 
+            hideErrors: true,
+            checkTimeoutInterval: 120000 
+        });
         this.bot.loadPlugin(pathfinder);
         this.setupEvents();
     }
 
     setupEvents() {
         this.bot.on("spawn", async () => {
-            console.log(color.green(`[SİSTEM] Bot lobiye girdi.`));
+            console.log(color.green(`[BOT] Dünyaya giriş yaptı.`));
             setTimeout(() => this.bot.chat(`/login ${this.options.password}`), 3000);
-            this.startRadar();
+            this.startPortalRoutine();
         });
-        this.bot.on("end", () => setTimeout(() => this.init(), 5000));
+        this.bot.on("end", () => setTimeout(() => this.init(), 10000));
     }
 
-    // GÜVENLİ HAREKET FONKSİYONU
-    setMove(action, state) {
-        if (this.bot && this.bot.setControlState) {
-            try {
-                this.bot.setControlState(action, state);
-            } catch (e) {}
-        }
-    }
-
-    startRadar() {
+    startPortalRoutine() {
         setInterval(() => {
-            // BOTUN VARLIĞINI KONTROL ET
             if (!this.bot || !this.bot.entity) return;
-            
+
             const portal = this.bot.findBlock({
                 matching: (b) => b.name === 'nether_portal' || b.name === 'portal',
                 maxDistance: 32
@@ -44,13 +38,32 @@ class AdvancedBot {
 
             if (portal) {
                 const dist = this.bot.entity.position.distanceTo(portal.position);
-                process.stdout.write(color.cyan(`\r[RADAR] Uzaklık: ${dist.toFixed(1)}m`));
                 
+                // 1. Videodaki gibi portala bak
                 this.bot.lookAt(portal.position.offset(0, 1, 0));
-                this.setMove("forward", true);
+
+                // 2. Eğer portal çok yakınsa (videodaki yarım giriş), titreşim başlat
+                if (dist < 1.3) {
+                    this.performVideoAction();
+                } else {
+                    // 3. Uzaktaysa düz yürü
+                    this.bot.setControlState("forward", true);
+                    this.bot.setControlState("sprint", true);
+                }
             }
-        }, 1000);
+        }, 500);
+    }
+
+    // VİDEODAKİ O KÜÇÜK İLERİ-GERİ HAREKETLERİ
+    performVideoAction() {
+        const actions = ["forward", "back"];
+        let i = 0;
+        setInterval(() => {
+            this.bot.setControlState(actions[i % 2], true);
+            setTimeout(() => this.bot.setControlState(actions[i % 2], false), 200);
+            i++;
+        }, 400);
     }
 }
 
-module.exports = (options) => new AdvancedBot(options);
+module.exports = (options) => new PlayerBot(options);
