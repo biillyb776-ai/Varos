@@ -6,8 +6,8 @@ const { randomInt } = require("crypto");
 const color = require("colors");
 const readline = require('readline'); 
 
-// SAF JAVASCRIPT HAFİF RADAR MOTORU
-const radar = require('mineflayer-radar');
+// ASLA HATA VERMEYEN SAF JAVASCRIPT TARAYICI MONITORÜ
+const inventoryViewer = require('mineflayer-web-inventory');
 
 const sleep = (toMs) => {
   return new Promise((r) => {
@@ -38,7 +38,7 @@ class BotInstance {
     this.portalTimeout = null;   
     this.isPortaling = false; 
     this.dynamicCheckInterval = null;
-    this.radarServer = null; // Radar sunucu referansı
+    this.viewerInstance = null;
 
     this.startBot();
   }
@@ -74,11 +74,6 @@ class BotInstance {
           this.isPortaling = true;
           if (this.portalTimeout) clearTimeout(this.portalTimeout);
           if (this.dynamicCheckInterval) clearInterval(this.dynamicCheckInterval);
-          
-          // Sunucu geçişinde radar sunucusunu da kapatıyoruz ki çakışmasın
-          if (this.radarServer) {
-            try { this.radarServer.close(); } catch(e) {}
-          }
           
           this.clearAllMovements();
           
@@ -125,14 +120,13 @@ class BotInstance {
 
       console.log(color.green(`[${this.botOptions.username}] Dünyaya giriş yaptı (Spawn: ${this.spawned})`));
 
-      // 👁️ RADAR YAYININI BAŞLATMA
+      // 👁️ WEB MONITORÜNÜ BAŞLATMA (Port: 3000)
       if (this.spawned === 1) {
         try {
-          // Yayını lobi için 3000 portundan başlatıyoruz
-          this.radarServer = radar(this.bot, { port: 3000 });
-          console.log(color.bgGreen.black(`\n 📡 [CANLI RADAR] Telefon tarayıcından izlemek için gir: http://localhost:3000 \n`));
+          inventoryViewer(this.bot, { port: 3000, startOnLoad: true });
+          console.log(color.bgGreen.black(`\n 📡 [CANLI MONITOR] Web ekranı açıldı! İzlemek için tarayıcına gir: http://localhost:3000 \n`));
         } catch (e) {
-          console.log(color.red("[RADAR HATASI] Canlı radar başlatılamadı."));
+          console.log(color.red("[MONİTOR HATASI] Web ekranı başlatılamadı."));
         }
       }
 
@@ -240,9 +234,6 @@ class BotInstance {
     
     this.clearAllMovements();
     if (this.dynamicCheckInterval) clearInterval(this.dynamicCheckInterval);
-    if (this.radarServer) {
-      try { this.radarServer.close(); } catch(e) {}
-    }
     if (this.bot) {
       try { this.bot.end(); } catch (e) {}
     }
