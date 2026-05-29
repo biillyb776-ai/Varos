@@ -9,27 +9,28 @@ class PlayerBot {
     }
 
     init() {
-        this.bot = mineflayer.createBot({ 
-            ...this.options, 
-            hideErrors: true,
-            checkTimeoutInterval: 120000 
-        });
+        // Hata korumalı bot oluşturma
+        this.bot = mineflayer.createBot({ ...this.options, hideErrors: true });
         this.bot.loadPlugin(pathfinder);
         this.setupEvents();
     }
 
     setupEvents() {
         this.bot.on("spawn", async () => {
-            console.log(color.green(`[BOT] Dünyaya giriş yaptı.`));
+            console.log(color.green(`[BOT] Giriş yaptı.`));
             setTimeout(() => this.bot.chat(`/login ${this.options.password}`), 3000);
             this.startPortalRoutine();
         });
+        
+        // Hata durumunda yeniden bağlanma
         this.bot.on("end", () => setTimeout(() => this.init(), 10000));
     }
 
     startPortalRoutine() {
-        setInterval(() => {
-            if (!this.bot || !this.bot.entity) return;
+        // Güvenli bir şekilde döngü başlat
+        this.routine = setInterval(() => {
+            // BOTUN VARLIĞINI KONTROL ET
+            if (!this.bot || !this.bot.findBlock) return;
 
             const portal = this.bot.findBlock({
                 matching: (b) => b.name === 'nether_portal' || b.name === 'portal',
@@ -37,32 +38,35 @@ class PlayerBot {
             });
 
             if (portal) {
-                const dist = this.bot.entity.position.distanceTo(portal.position);
+                const dist = this.bot.entity ? this.bot.entity.position.distanceTo(portal.position) : 999;
                 
-                // 1. Videodaki gibi portala bak
                 this.bot.lookAt(portal.position.offset(0, 1, 0));
 
-                // 2. Eğer portal çok yakınsa (videodaki yarım giriş), titreşim başlat
                 if (dist < 1.3) {
                     this.performVideoAction();
                 } else {
-                    // 3. Uzaktaysa düz yürü
-                    this.bot.setControlState("forward", true);
-                    this.bot.setControlState("sprint", true);
+                    // Güvenli hareket
+                    if (this.bot.setControlState) {
+                        this.bot.setControlState("forward", true);
+                        this.bot.setControlState("sprint", true);
+                    }
                 }
             }
         }, 500);
     }
 
-    // VİDEODAKİ O KÜÇÜK İLERİ-GERİ HAREKETLERİ
     performVideoAction() {
-        const actions = ["forward", "back"];
-        let i = 0;
-        setInterval(() => {
-            this.bot.setControlState(actions[i % 2], true);
-            setTimeout(() => this.bot.setControlState(actions[i % 2], false), 200);
-            i++;
-        }, 400);
+        // Hareketleri tek bir güvenli fonksiyonda topla
+        const move = (action, state) => {
+            if (this.bot && this.bot.setControlState) {
+                this.bot.setControlState(action, state);
+            }
+        };
+
+        move("forward", true);
+        setTimeout(() => move("forward", false), 200);
+        setTimeout(() => move("back", true), 200);
+        setTimeout(() => move("back", false), 400);
     }
 }
 
