@@ -4,38 +4,40 @@ const color = require("colors");
 class ProBot {
     constructor(options) {
         this.options = options;
-        this.isExecuting = false;
-        this.portalTimer = null; 
+        this.isExecuting = false; 
+        this.portalTimer = null;  
         this.init();
     }
 
     init() {
-        // index.js içindeki bilgileri (host, username, password) aynen aktarıyoruz
         const botSettings = {
             ...this.options,
-            auth: 'offline', // 6b6t gibi crack sunucular için zorunlu mod
+            auth: 'offline', // 6b6t için zorunlu crack modu
             hideErrors: true
         };
 
         this.bot = mineflayer.createBot(botSettings);
-        
-        // package.json'daki Baritone eklentisini güvenli (çökmesiz) yükleme modu
+
+        // --- BARITONE HATA ENGELLEYİCİ GÜVENLİ YÜKLEME ---
         try {
-            const rawBaritone = require('@miner-org/mineflayer-baritone');
-            const baritonePlugin = rawBaritone.baritone || rawBaritone.default || rawBaritone;
+            const baritoneModule = require('@miner-org/mineflayer-baritone');
+            // Modülün fonksiyon olan kısmını çekiyoruz (Hatayı kesin çözer)
+            const baritonePlugin = baritoneModule.baritone || baritoneModule.default || baritoneModule;
             
             if (typeof baritonePlugin === 'function') {
                 this.bot.loadPlugin(baritonePlugin);
+                console.log(color.cyan(`[SİSTEM] Baritone başarıyla yüklendi! (bot.baritone aktif)`));
+            } else {
+                console.log(color.yellow(`[UYARI] Baritone fonksiyonu ayıklanamadı, düz modda devam ediliyor.`));
             }
         } catch (err) {
-            // Hata verirse terminale bas ama botun açılmasını engelleme
-            console.log(color.yellow(`[SİSTEM] Baritone modülü düz modda es geçildi: ${err.message}`));
+            console.log(color.red(`[HATA] Baritone yüklenirken sistemsel hata: ${err.message}`));
         }
 
         this.setupEvents();
     }
 
-    // --- 6B6T HAREKET VE TUŞ MOTORU ---
+    // --- HATA GEÇİRMEZ HAREKET SİSTEMİ ---
     safeControl(action, state) {
         if (this.bot && this.bot.controlState) {
             try {
@@ -44,79 +46,74 @@ class ProBot {
         }
     }
 
-    // Botun yürüyüş tuşlarını tamamen serbest bırakır
+    // Tüm tuşları serbest bırakır
     clearMovement() {
         const actions = ["forward", "back", "left", "right", "jump", "sprint"];
         actions.forEach(action => this.safeControl(action, false));
     }
 
     setupEvents() {
-        // Bot lobiden sıraya veya ana dünyaya her geçtiğinde tetiklenir
         this.bot.on("spawn", async () => {
-            console.log(color.green(`[6b6t-MAIN] ${this.bot.username} aktif konuma geçti.`));
+            console.log(color.green(`[6b6t] ${this.bot.username} sunucuya başarıyla giriş yaptı.`));
             
-            // Eski zamanlayıcıları sıfırla ki hafıza şişmesin
             if (this.portalTimer) clearInterval(this.portalTimer);
             this.isExecuting = false;
 
-            // index.js'deki şifrenle otomatik giriş yapar
+            // Otomatik giriş komutu
             setTimeout(() => {
                 if (this.bot && this.bot.chat) {
-                    console.log(color.cyan(`[OTOMASYON] Şifre gönderiliyor...`));
                     this.bot.chat(`/login ${this.options.password}`);
                 }
             }, 3000);
 
-            // Gelişmiş portal tarayıcısını başlat
+            // Orijinal repo portal takibini başlat
             this.startPortalBehavior();
         });
 
-        // Bağlantı koptuğunda index.js'deki reconnectDelay (60 saniye) süresince bekler
         this.bot.on("end", () => {
             if (this.portalTimer) clearInterval(this.portalTimer);
             const delay = this.options.reconnectDelay || 5000;
-            console.log(color.red(`[UYARI] Bağlantı kesildi. ${delay / 1000} saniye sonra yeniden bağlanacak...`));
+            console.log(color.red(`[DURUM] Bağlantı kesildi. ${delay / 1000} saniye sonra yeniden denenecek...`));
             setTimeout(() => this.init(), delay);
         });
     }
 
     startPortalBehavior() {
-        // `therealrealguy` mantığındaki gibi hızlı tarama döngüsü (Her 400ms'de bir)
+        // Her 400 milisaniyede bir çevreyi radarla tara
         this.portalTimer = setInterval(() => {
             if (!this.bot || !this.bot.entity || this.isExecuting) return;
 
-            // Çevredeki nether portalı bloklarını radarla bulur
+            // En yakın nether portal bloğunu bul
             const portal = this.bot.findBlock({
                 matching: (b) => b && (b.name === 'nether_portal' || b.name === 'portal'),
-                maxDistance: 32 // 32 blok yarıçapında arama
+                maxDistance: 32
             });
 
             if (portal) {
                 const dist = this.bot.entity.position.distanceTo(portal.position);
                 
-                // Botun bakış açısını tam portala odaklar
+                // Kafayı portala odakla
                 this.bot.lookAt(portal.position.offset(0, 1, 0));
 
-                // Portala girdik mi veya dibinde miyiz?
+                // Portala girdik mi?
                 if (dist <= 1.4) {
-                    this.clearMovement(); // Titreşim için düz koşuyu kapat
+                    this.clearMovement(); // Düz yürümeyi kapat ki titreşim çalışsın
                     this.perform6b6tEntry();
                 } else {
-                    // Portala doğru depar atarak koş
+                    // Uzaktaysak portala doğru depar at
                     this.safeControl("forward", true);
                     this.safeControl("sprint", true);
                 }
             } else {
-                // Etrafta portal kalmadıysa (ışınlandıysak) botu frenle
                 this.clearMovement();
             }
         }, 400);
     }
 
-    // O MEŞHUR TİTREŞİMLİ GEÇİŞ (ANTİ-BOT BYPASS)
+    // 6B6T ANTİ-CHEAT BYPASS MANTIĞI (W-S TİTREŞİMİ)
     perform6b6tEntry() {
         this.isExecuting = true;
-        console.log(color.magenta(`[PORTAL] Portala girildi! Titreşim (Glitch) modu aktif.`));
+        console.log(color.magenta(`[PORTAL] Portala girildi! Titreşim bypass modu devrede.`));
         
         let count = 0;
         const interval = setInterval(() => {
@@ -125,19 +122,18 @@ class ProBot {
                 return;
             }
 
-            // Çok hızlı şekilde w-s tuş kombinasyonu yaparak sunucu lagını ve bot korumasını deler
+            // İleri-geri glitch hareketi
             this.safeControl("forward", count % 2 === 0);
             this.safeControl("back", count % 2 !== 0);
             
             count++;
             
-            // 20 adım (yaklaşık 4 saniye) çırpınıştan sonra durur
             if (count > 20) {
                 clearInterval(interval);
                 this.clearMovement(); 
-                console.log(color.bgGreen.black(`[BAŞARI] Titreşim tamamlandı. Aktarım/Sıra bekleniyor...`));
+                console.log(color.bgGreen.black(`[BAŞARI] Titreşim tamamlandı. Aktarım bekleniyor...`));
                 
-                // 15 saniye boyunca botu dondurur ki sunucu geçişi tamamlasın
+                // Yeniden tetiklenmemesi için 15 saniye kilitle
                 setTimeout(() => {
                     this.isExecuting = false;
                 }, 15000);
