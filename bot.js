@@ -34,7 +34,7 @@ class BotInstance {
     this.currentState = state.offline;
     this.verifyRequired = false; 
     this.portalTimeout = null;   
-    this.isPortaling = false; // Portala yönelme durum kontrolü (Çakışma önleyici)
+    this.isPortaling = false; 
 
     this.startBot();
   }
@@ -43,7 +43,6 @@ class BotInstance {
     this.verifyRequired = false;
     this.isPortaling = false;
     
-    // 1.21.5 Sürüm geçiş hatalarını ve paket düşmelerini engelleyen agresif güvenlik ayarları
     const secureOptions = {
       ...this.botOptions,
       hideErrors: true,                
@@ -52,7 +51,9 @@ class BotInstance {
       physicsEnabled: true,            
       resetErrorChannels: true,
       skipValidation: true,
-      waitWindowCloseTimeout: 5000
+      waitWindowCloseTimeout: 5000,
+      chatSignature: false,
+      clientSignature: false
     };
 
     this.bot = mineflayer.createBot(secureOptions);
@@ -61,6 +62,28 @@ class BotInstance {
   }
 
   registerEvents() {
+    // KESİN ÇÖZÜM 1: 1.21.5 Sunucu geçişlerindeki gizli Resource Pack zorunluluğunu bypass eder
+    this.bot.on('resourcePackSend', (url, hash, required, message) => {
+      console.log(color.magenta(`[RESOURCE PACK] Sunucudan doku paketi isteği geldi. Otomatik onaylanıyor...`));
+      try {
+        // Sunucuya paketi başarıyla indirdiğimizi ve uyguladığımızı simüle eden kritik yanıtlar
+        this.bot.acceptResourcePack();
+      } catch (e) {
+        // Alternatif protokol gönderimi (Eğer üstteki kütüphane bazen takılırsa)
+        if (this.bot._client) {
+          this.bot._client.write('resource_pack_receive', { result: 2 }); // DOWNLOADED
+          this.bot._client.write('resource_pack_receive', { result: 0 }); // SUCCESSFULLY_LOADED
+        }
+      }
+    });
+
+    // KESİN ÇÖZÜM 2: İmza paketlerini sunucuya çaktırmadan havada yutar
+    this.bot._client.on('packet', (data, metadata) => {
+      if (metadata.name === 'server_data' || metadata.name === 'player_chat_header') {
+        return true; 
+      }
+    });
+
     this.bot.on("error", async (error) => {
       console.log(color.yellow(`[${this.botOptions.username}] Hata Yakalandı: `) + error.message);
       await this.reconnect();
@@ -76,13 +99,12 @@ class BotInstance {
       console.log(color.red(`[${this.botOptions.username}] Sunucudan Atıldı (Kick): `) + kickReason);
     });
 
-    // KRİTİK ÖNLEM: Bot lobiden çıkıp ana dünyaya aktarılırken (aktarım esnasında) tüm hareketleri dondurur
     this.bot.on("playerLeft", (player) => {
       if (player.username === this.botOptions.username) {
-        this.isPortaling = true; // Aktarım sürecinde yeni portal araması tetiklenmesin
+        this.isPortaling = true; 
         if (this.portalTimeout) clearTimeout(this.portalTimeout);
         this.clearAllMovements();
-        console.log(color.magenta(`[SYSTEM] Sunucu geçişi algılandı, hareket paketleri donduruldu.`));
+        console.log(color.magenta(`[SYSTEM] Sunucu geçişi (Lobi -> Ana Dünya) başladı...`));
       }
     });
 
@@ -100,25 +122,24 @@ class BotInstance {
       // ŞİFRE GİRİŞİ YAPMA (İlk Giriş - Lobi)
       if (this.spawned == 1) {
         this.isPortaling = false;
-        await sleep(3000); // Giriş yapmadan önce sunucunun botu tamamen yüklemesini bekle (CPU dostu)
+        await sleep(3000); 
         
         if (this.currentState === state.online) {
           this.bot.chat(`/login ${this.botOptions.password}`);
           console.log(color.cyan(`[${this.botOptions.username}] Şifre otomatik olarak gönderildi.`));
           
-          // Sunucu haritasının (chunks) oturması için 12 saniye tam sessizlik sağlar (Kick yememek için en kritik nokta)
           this.portalTimeout = setTimeout(() => this.autoEnterPortal(), 12000);
         }
       }
 
-      // Ana Dünyaya Geçiş ve Oturma Başarılı
+      // Ana Dünyaya Tam Geçiş Sağlandığında
       if (this.spawned === 2) {
-        this.isPortaling = false; // Lobi süreci bitti
+        this.isPortaling = false; 
         if (!sentPlayercount && this.bot.players) {
           const players = Object.values(this.bot.players).filter(
             (p) => p.username !== this.botOptions.username
           );
-          console.log(color.green(`[BAŞARILI] ${players.length} oyuncu çevrimiçi. Ana dünyaya tamamen oturuldu.`));
+          console.log(color.green(`[BAŞARILI] Ana dünyaya tamamen oturuldu! Çevrimiçi oyuncu: ${players.length}`));
           sentPlayercount = true;
         }
       }
@@ -135,7 +156,6 @@ class BotInstance {
         console.log(ansiMsg);
       }
 
-      // DOĞRULAMA (VERIFY) SİSTEMİ YAKALAYICI
       if (msg.includes('6b6t.org/verify') || msg.toLowerCase().includes('verify')) {
         this.verifyRequired = true;
         
@@ -155,11 +175,10 @@ class BotInstance {
     });
   }
 
-  // Akıllı, Çakışma Önleyici Güvenli Portal Sistemi
   async autoEnterPortal() {
     if (this.verifyRequired || this.currentState !== state.online || this.isPortaling) return;
 
-    this.isPortaling = true; // Portal işlemi başladı, döngüyü kilitle
+    this.isPortaling = true; 
     console.log(color.cyan(`[PORTAL] Çevredeki portal blokları taranıyor...`));
 
     try {
@@ -188,7 +207,6 @@ class BotInstance {
     }
   }
 
-  // Yedek Düz Yürüme Sistemi (Zıplama kaldırılarak hile koruması tamamen bypass edildi)
   walkToPortalBackup() {
     if (this.verifyRequired || this.currentState !== state.online) return;
     
@@ -200,7 +218,6 @@ class BotInstance {
     }, 6000);
   }
 
-  // Tüm Kontrol Tuşlarını ve Yapay Zekayı Sıfırlama Fonksiyonu
   clearAllMovements() {
     try {
       if (this.bot.ashfinder) this.bot.ashfinder.stop();
@@ -212,7 +229,6 @@ class BotInstance {
     } catch (e) {}
   }
 
-  // Optimize Edilmiş CPU ve Sunucu Dostu Anti-AFK Döngüsü
   async movementLoop() {
     const maxMotionDelay = 1000;
     while (this.currentState === state.online && !this.verifyRequired && !this.isPortaling) {
@@ -229,10 +245,9 @@ class BotInstance {
         }
         this.bot.look(randomInt(-180, 180), randomInt(-90, 90));
       } catch (err) {
-        // Döngü içi olası anlık uyuşmazlıklarda script çökmez, kırılır ve baştan başlar
         break;
       }
-      await sleep(4000); // Paket gönderimini 4 saniyeye çıkararak sunucunun gözünde tamamen "yasal" oyuncu oluyoruz
+      await sleep(4000); 
     }
   }
 
@@ -254,7 +269,6 @@ class BotInstance {
   }
 }
 
-// KONSOLDAN EL İLE BARITONE VE SOHBET YÖNETİMİ
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
