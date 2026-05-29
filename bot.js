@@ -131,4 +131,3 @@ class AdvancedBot {
 
 // Bot Başlatıcı
 module.exports = (options) => new AdvancedBot(options);
-a
