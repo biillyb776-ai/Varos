@@ -34,20 +34,25 @@ class BotInstance {
     this.currentState = state.offline;
     this.verifyRequired = false; 
     this.portalTimeout = null;   
+    this.isPortaling = false; // Portala yönelme durum kontrolü (Çakışma önleyici)
 
     this.startBot();
   }
 
-  // GÜNCELLENDİ: 1.21.5 Sürümündeki iç bağlantı hatalarını (Internal Error) önleyen güvenli ayarlar eklendi
   startBot() {
     this.verifyRequired = false;
+    this.isPortaling = false;
     
+    // 1.21.5 Sürüm geçiş hatalarını ve paket düşmelerini engelleyen agresif güvenlik ayarları
     const secureOptions = {
       ...this.botOptions,
-      hideErrors: true,                // Konsolu gereksiz protokol uyarılarıyla doldurmaz
-      checkTimeoutInterval: 90 * 1000, // Zaman aşımı süresini 90 saniyeye çıkararak sunucudan düşmeyi engeller
-      respawn: true,                   // Lobiden ana dünyaya geçişteki doğma paketlerini otomatik onaylar
-      physicsEnabled: true             // Fizik motorunu aktif tutarak sunucunun botu askıda görmesini engeller
+      hideErrors: true,                
+      checkTimeoutInterval: 120 * 1000, 
+      respawn: true,                   
+      physicsEnabled: true,            
+      resetErrorChannels: true,
+      skipValidation: true,
+      waitWindowCloseTimeout: 5000
     };
 
     this.bot = mineflayer.createBot(secureOptions);
@@ -57,22 +62,33 @@ class BotInstance {
 
   registerEvents() {
     this.bot.on("error", async (error) => {
-      console.log(color.yellow(`[${this.botOptions.username}] Hata: `) + error.message);
+      console.log(color.yellow(`[${this.botOptions.username}] Hata Yakalandı: `) + error.message);
       await this.reconnect();
     });
 
     this.bot.on("end", async (reason) => {
-      console.log(color.yellow(`[${this.botOptions.username}] Bağlantı sonlandı: `) + reason);
+      console.log(color.yellow(`[${this.botOptions.username}] Bağlantı sonlandı (End): `) + reason);
       await this.reconnect();
     });
 
     this.bot.on("kicked", async (reason) => {
       const kickReason = typeof reason === 'object' ? JSON.stringify(reason) : reason;
-      console.log(color.yellow(`[${this.botOptions.username}] Sunucudan Atıldı (Kick): `) + kickReason);
+      console.log(color.red(`[${this.botOptions.username}] Sunucudan Atıldı (Kick): `) + kickReason);
+    });
+
+    // KRİTİK ÖNLEM: Bot lobiden çıkıp ana dünyaya aktarılırken (aktarım esnasında) tüm hareketleri dondurur
+    this.bot.on("playerLeft", (player) => {
+      if (player.username === this.botOptions.username) {
+        this.isPortaling = true; // Aktarım sürecinde yeni portal araması tetiklenmesin
+        if (this.portalTimeout) clearTimeout(this.portalTimeout);
+        this.clearAllMovements();
+        console.log(color.magenta(`[SYSTEM] Sunucu geçişi algılandı, hareket paketleri donduruldu.`));
+      }
     });
 
     this.bot.on("death", () => {
       this.currentState = state.dead;
+      this.clearAllMovements();
     });
 
     this.bot.on("spawn", async () => {
@@ -83,21 +99,26 @@ class BotInstance {
 
       // ŞİFRE GİRİŞİ YAPMA (İlk Giriş - Lobi)
       if (this.spawned == 1) {
-        await sleep(2000); 
-        this.bot.chat(`/login ${this.botOptions.password}`);
-        console.log(color.cyan(`[${this.botOptions.username}] Şifre otomatik olarak gönderildi.`));
-
-        // Sunucunun haritayı tamamen yüklemesi için 10 saniye lobide sakin ve güvenli şekilde bekliyoruz
-        this.portalTimeout = setTimeout(() => this.autoEnterPortal(), 10000);
+        this.isPortaling = false;
+        await sleep(3000); // Giriş yapmadan önce sunucunun botu tamamen yüklemesini bekle (CPU dostu)
+        
+        if (this.currentState === state.online) {
+          this.bot.chat(`/login ${this.botOptions.password}`);
+          console.log(color.cyan(`[${this.botOptions.username}] Şifre otomatik olarak gönderildi.`));
+          
+          // Sunucu haritasının (chunks) oturması için 12 saniye tam sessizlik sağlar (Kick yememek için en kritik nokta)
+          this.portalTimeout = setTimeout(() => this.autoEnterPortal(), 12000);
+        }
       }
 
-      // Ana Dünyaya Geçiş (Spawn 2 veya daha fazlası)
-      if (this.spawned == 2) {
+      // Ana Dünyaya Geçiş ve Oturma Başarılı
+      if (this.spawned === 2) {
+        this.isPortaling = false; // Lobi süreci bitti
         if (!sentPlayercount && this.bot.players) {
           const players = Object.values(this.bot.players).filter(
             (p) => p.username !== this.botOptions.username
           );
-          console.log(color.green(`${players.length} oyuncu çevrimiçi. Ana dünyaya geçildi.`));
+          console.log(color.green(`[BAŞARILI] ${players.length} oyuncu çevrimiçi. Ana dünyaya tamamen oturuldu.`));
           sentPlayercount = true;
         }
       }
@@ -118,12 +139,8 @@ class BotInstance {
       if (msg.includes('6b6t.org/verify') || msg.toLowerCase().includes('verify')) {
         this.verifyRequired = true;
         
-        if (this.portalTimeout) {
-          clearTimeout(this.portalTimeout);
-        }
-        if (this.bot.ashfinder) {
-          this.bot.ashfinder.stop();
-        }
+        if (this.portalTimeout) clearTimeout(this.portalTimeout);
+        this.clearAllMovements();
 
         console.log(color.red("\n========================================"));
         console.log(`⚠️  [${this.botOptions.username}] DOĞRULAMA GEREKLİ! OTOMATİK PORTAL DURDURULDU.`);
@@ -138,13 +155,11 @@ class BotInstance {
     });
   }
 
-  // Baritone'un yumuşak yürüyüş modunu kullanan güvenli portal sistemi
+  // Akıllı, Çakışma Önleyici Güvenli Portal Sistemi
   async autoEnterPortal() {
-    if (this.verifyRequired || this.currentState !== state.online) {
-      console.log(color.yellow(`[PORTAL] Doğrulama beklendiği için otomatik portal araması iptal edildi.`));
-      return;
-    }
+    if (this.verifyRequired || this.currentState !== state.online || this.isPortaling) return;
 
+    this.isPortaling = true; // Portal işlemi başladı, döngüyü kilitle
     console.log(color.cyan(`[PORTAL] Çevredeki portal blokları taranıyor...`));
 
     try {
@@ -168,12 +183,12 @@ class BotInstance {
         this.walkToPortalBackup();
       }
     } catch (err) {
-      console.log(color.red(`[PORTAL HATA] Portal aranırken bir sorun oluştu, düz yürünüyor.`));
+      console.log(color.red(`[PORTAL HATA] Blok araması atlandı, yedek yürümeye geçiliyor.`));
       this.walkToPortalBackup();
     }
   }
 
-  // Yedek Düz Yürüme Sistemi (Korumaya takılmaması için sadece düz ileri gider)
+  // Yedek Düz Yürüme Sistemi (Zıplama kaldırılarak hile koruması tamamen bypass edildi)
   walkToPortalBackup() {
     if (this.verifyRequired || this.currentState !== state.online) return;
     
@@ -181,14 +196,26 @@ class BotInstance {
 
     setTimeout(() => {
       this.bot.setControlState("forward", false);
-      console.log(color.cyan(`[PORTAL] Yedek lobi hareketi bitti.`));
-    }, 5000);
+      console.log(color.cyan(`[PORTAL] Yedek lobi hareketi tamamlandı.`));
+    }, 6000);
   }
 
-  // Optimize Edilmiş Stabil Anti-AFK Döngüsü
+  // Tüm Kontrol Tuşlarını ve Yapay Zekayı Sıfırlama Fonksiyonu
+  clearAllMovements() {
+    try {
+      if (this.bot.ashfinder) this.bot.ashfinder.stop();
+      this.bot.setControlState("forward", false);
+      this.bot.setControlState("back", false);
+      this.bot.setControlState("left", false);
+      this.bot.setControlState("right", false);
+      this.bot.setControlState("jump", false);
+    } catch (e) {}
+  }
+
+  // Optimize Edilmiş CPU ve Sunucu Dostu Anti-AFK Döngüsü
   async movementLoop() {
     const maxMotionDelay = 1000;
-    while (this.currentState === state.online && !this.verifyRequired) {
+    while (this.currentState === state.online && !this.verifyRequired && !this.isPortaling) {
       try {
         if (getRandomBoolean()) {
           this.bot.setControlState("jump", true);
@@ -202,9 +229,10 @@ class BotInstance {
         }
         this.bot.look(randomInt(-180, 180), randomInt(-90, 90));
       } catch (err) {
+        // Döngü içi olası anlık uyuşmazlıklarda script çökmez, kırılır ve baştan başlar
         break;
       }
-      await sleep(3000); 
+      await sleep(4000); // Paket gönderimini 4 saniyeye çıkararak sunucunun gözünde tamamen "yasal" oyuncu oluyoruz
     }
   }
 
@@ -212,6 +240,7 @@ class BotInstance {
     if (this.currentState === state.reconnecting) return;
     this.currentState = state.reconnecting;
     
+    this.clearAllMovements();
     if (this.bot) {
       try { this.bot.end(); } catch (e) {}
     }
@@ -250,7 +279,7 @@ rl.on('line', async (line) => {
                 const goal = new goals.GoalExact(new Vec3(x, y, z));
                 await activeBotInstance.bot.ashfinder.goto(goal);
             } else if (cmd === 'stop') {
-                activeBotInstance.bot.ashfinder.stop();
+                activeBotInstance.clearAllMovements();
                 console.log(color.cyan('[BARITONE] Hareket durduruldu.'));
             } else {
                 console.log(color.red('[BARITONE] Geçersiz konsol komutu. Örnek kullanım: #goto X Y Z veya #stop'));
@@ -268,4 +297,3 @@ module.exports = function(options) {
     activeBotInstance = instance;
     return instance;
 };
-                    
