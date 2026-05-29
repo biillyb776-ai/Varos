@@ -64,10 +64,8 @@ class BotInstance {
   }
 
   registerEvents() {
-    // KESİN ÇÖZÜM: Sunucunun lobi-ana dünya arasındaki tüm geçiş aşamalarını el ile yönetiyoruz
     if (this.bot._client) {
       this.bot._client.on('packet', (data, metadata) => {
-        // 1. Aşama: Sunucu transferi başlattı
         if (metadata.name === 'start_configuration') {
           this.isPortaling = true;
           if (this.portalTimeout) clearTimeout(this.portalTimeout);
@@ -79,34 +77,26 @@ class BotInstance {
           console.log(color.magenta(`[GEÇİŞ] Yapılandırma başladı. Fizik motoru donduruldu.`));
         }
 
-        // 2. Aşama (TIKANMA NOKTASI): Sunucu yapılandırmayı bitirdiğini söylediğinde
-        // Botu zorla yeni dünyaya uyandırıyoruz ve el sıkışmayı tamamlıyoruz
         if (metadata.name === 'finish_configuration') {
           console.log(color.green(`[GEÇİŞ] Yapılandırma bitti! Sunucu el sıkışması onaylanıyor...`));
           try {
-            // Sunucuya "Hazırım, beni ana dünyaya doğurt" paketini el ile fırlatıyoruz
             this.bot._client.write('finish_configuration', {});
-          } catch (e) {
-            console.log(color.red(`[GEÇİŞ HATASI] Onay paketi gönderilemedi, otomatik geçiş bekleniyor.`));
-          }
+          } catch (e) {}
           
-          // Fizikleri 2 saniye sonra güvenle geri aç ki harita tam otursun
           setTimeout(() => {
             if (this.bot.physics) {
               this.bot.physicsEnabled = true;
-              console.log(color.cyan(`[GEÇİŞ] Fizik motoru ana dünya için başarıyla serbest bırakıldı.`));
+              console.log(color.cyan(`[GEÇİŞ] Fizik motoru ana dünya için serbest bırakıldı.`));
             }
           }, 2000);
         }
 
-        // Kilitlenmeye sebep olan gereksiz imza paketlerini havada yutmaya devam
         if (metadata.name === 'server_data' || metadata.name === 'player_chat_header' || metadata.name === 'bundle_delimiter') {
           return true; 
         }
       });
     }
 
-    // RESOURCE PACK ONAYLAYICI
     this.bot.on('resourcePackSend', (url, hash, required, message) => {
       try {
         this.bot.acceptResourcePack();
@@ -173,11 +163,10 @@ class BotInstance {
           }
           console.log(color.cyan(`[${this.botOptions.username}] Şifre başarıyla gönderildi.`));
           
-          this.portalTimeout = setTimeout(() => this.autoEnterPortal(), 12000);
+          this.portalTimeout = setTimeout(() => this.autoEnterPortal(), 5000);
         }
       }
 
-      // Ana Dünyaya Tam Geçiş Sağlandığında
       if (this.spawned === 2) {
         this.isPortaling = false; 
         if (!sentPlayercount && this.bot.players) {
@@ -196,16 +185,13 @@ class BotInstance {
 
     this.bot.on("messagestr", (ansiMsg) => {
       const msg = ansiMsg.toString();
-
       if (!loggingMsgs) {
         console.log(ansiMsg);
       }
-
       if (msg.includes('6b6t.org/verify') || msg.toLowerCase().includes('verify')) {
         this.verifyRequired = true;
         if (this.portalTimeout) clearTimeout(this.portalTimeout);
         this.clearAllMovements();
-
         console.log(color.red("\n========================================"));
         console.log(`⚠️  [${this.botOptions.username}] DOĞRULAMA GEREKLİ! OTOMATİK PORTAL DURDURULDU.`);
         console.log("========================================\n");
@@ -213,41 +199,36 @@ class BotInstance {
     });
   }
 
+  // ULTRA AGRESİF PORTAL MOTORU
   async autoEnterPortal() {
     if (this.verifyRequired || this.currentState !== state.online || this.isPortaling) return;
 
     this.isPortaling = true; 
-    console.log(color.cyan(`[PORTAL] Çevredeki portal blokları taranıyor...`));
+    
+    // Resimdeki net portal içi koordinatları
+    const targetPos = new Vec3(-1000.0, 101.0, -988.5); 
+    console.log(color.green(`[PORTAL] Hedef koordinat doğrulanıyor: X:-1000 Y:101 Z:-988`));
 
-    try {
-      const portalBlocks = this.bot.findBlocks({
-        matching: (block) => block.name === 'nether_portal' || block.name === 'portal',
-        maxDistance: 32,
-        count: 1
-      });
-
-      if (portalBlocks.length > 0) {
-        const portalPos = portalBlocks[0];
-        console.log(color.green(`[PORTAL] Portal bulundu! Koordinat: X:${portalPos.x} Y:${portalPos.y} Z:${portalPos.z}`));
-        
-        if (this.bot.ashfinder) {
-          const goal = new goals.GoalExact(portalPos);
-          await this.bot.ashfinder.goto(goal);
-        }
-      } else {
-        this.walkToPortalBackup();
-      }
-    } catch (err) {
-      this.walkToPortalBackup();
-    }
-  }
-
-  walkToPortalBackup() {
-    if (this.verifyRequired || this.currentState !== state.online) return;
+    // Koşma ve zıplama tuşlarını kilitliyoruz
     this.bot.setControlState("forward", true);
+    this.bot.setControlState("jump", true);
+    this.bot.setControlState("sprint", true);
+
+    // 5 saniye boyunca her fizik adımında bota "Portala Bak!" emri veriyoruz (Gözü kaymasın)
+    const lookInterval = setInterval(() => {
+      if (this.bot && this.bot.lookAt) {
+        this.bot.lookAt(targetPos.offset(0, 1, 0), true);
+      }
+    }, 50);
+
+    // 5 saniye sonra tuşları bırak ve portal içinde sabit kal
     setTimeout(() => {
+      clearInterval(lookInterval);
       this.bot.setControlState("forward", false);
-    }, 6000);
+      this.bot.setControlState("jump", false);
+      this.bot.setControlState("sprint", false);
+      console.log(color.magenta(`[PORTAL] Koşu bitti, portal merkezinde bekleniyor...`));
+    }, 5000);
   }
 
   clearAllMovements() {
@@ -258,6 +239,7 @@ class BotInstance {
       this.bot.setControlState("left", false);
       this.bot.setControlState("right", false);
       this.bot.setControlState("jump", false);
+      this.bot.setControlState("sprint", false);
     } catch (e) {}
   }
 
