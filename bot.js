@@ -6,6 +6,9 @@ const { randomInt } = require("crypto");
 const color = require("colors");
 const readline = require('readline'); 
 
+// CANLI GÖZLEM MOTORU (Harita Eklentisi)
+const mineflayerViewer = require('prismarine-viewer').mineflayer;
+
 const sleep = (toMs) => {
   return new Promise((r) => {
     setTimeout(r, toMs);
@@ -35,6 +38,7 @@ class BotInstance {
     this.verifyRequired = false; 
     this.portalTimeout = null;   
     this.isPortaling = false; 
+    this.dynamicCheckInterval = null;
 
     this.startBot();
   }
@@ -69,12 +73,14 @@ class BotInstance {
         if (metadata.name === 'start_configuration') {
           this.isPortaling = true;
           if (this.portalTimeout) clearTimeout(this.portalTimeout);
+          if (this.dynamicCheckInterval) clearInterval(this.dynamicCheckInterval);
+          
           this.clearAllMovements();
           
           if (this.bot.physics) {
             this.bot.physicsEnabled = false;
           }
-          console.log(color.magenta(`[GEÇİŞ] Yapılandırma başladı. Fizik motoru donduruldu.`));
+          console.log(color.red(`[KORUMA] Sunucu geçişi başladı! Baritone kapatıldı ve fizik motoru donduruldu.`));
         }
 
         if (metadata.name === 'finish_configuration') {
@@ -134,11 +140,22 @@ class BotInstance {
 
       console.log(color.green(`[${this.botOptions.username}] Dünyaya giriş yaptı (Spawn: ${this.spawned})`));
 
+      // CANLI GÖZÜ AKTİFLEŞTİRME (Port: 3000)
+      if (this.spawned === 1) {
+        try {
+          // Bot lobiye ilk girdiğinde harita yayınını 3000 portundan başlatır
+          mineflayerViewer(this.bot, { port: 3000, firstPerson: false });
+          console.log(color.bgGreen.black(`\n 👁️  [CANLI HARİTA] Botun gözü açıldı! İzlemek için tarayıcına gir: http://localhost:3000 \n`));
+        } catch (e) {
+          console.log(color.red("[HARİTA HATASI] Canlı yayın başlatılamadı."));
+        }
+      }
+
       if (this.bot.physics) {
         this.bot.physicsEnabled = true;
       }
 
-      // ŞİFRE GİRİŞİ YAPMA (İlk Giriş - Lobi)
+      // ŞİFRE GİRİŞİ YAPMA
       if (this.spawned == 1) {
         this.isPortaling = false;
         await sleep(3500); 
@@ -163,7 +180,7 @@ class BotInstance {
           }
           console.log(color.cyan(`[${this.botOptions.username}] Şifre başarıyla gönderildi.`));
           
-          this.portalTimeout = setTimeout(() => this.autoEnterPortal(), 5000);
+          this.portalTimeout = setTimeout(() => this.scanAndScanPortalWithBaritone(), 5000);
         }
       }
 
@@ -185,12 +202,13 @@ class BotInstance {
 
     this.bot.on("messagestr", (ansiMsg) => {
       const msg = ansiMsg.toString();
-      if (!loggingMsgs) {
-        console.log(ansiMsg);
-      }
+      // CHATİ KONTROL ETME: Sunucu mesajlarını her zaman konsola temizce basar
+      console.log(ansiMsg);
+
       if (msg.includes('6b6t.org/verify') || msg.toLowerCase().includes('verify')) {
         this.verifyRequired = true;
         if (this.portalTimeout) clearTimeout(this.portalTimeout);
+        if (this.dynamicCheckInterval) clearInterval(this.dynamicCheckInterval);
         this.clearAllMovements();
         console.log(color.red("\n========================================"));
         console.log(`⚠️  [${this.botOptions.username}] DOĞRULAMA GEREKLİ! OTOMATİK PORTAL DURDURULDU.`);
@@ -199,36 +217,58 @@ class BotInstance {
     });
   }
 
-  // ULTRA AGRESİF PORTAL MOTORU
-  async autoEnterPortal() {
+  async scanAndScanPortalWithBaritone() {
     if (this.verifyRequired || this.currentState !== state.online || this.isPortaling) return;
 
-    this.isPortaling = true; 
-    
-    // Resimdeki net portal içi koordinatları
-    const targetPos = new Vec3(-1000.0, 101.0, -988.5); 
-    console.log(color.green(`[PORTAL] Hedef koordinat doğrulanıyor: X:-1000 Y:101 Z:-988`));
+    console.log(color.cyan(`[TARAYICI] Çevredeki Nether Portalları aranıyor...`));
 
-    // Koşma ve zıplama tuşlarını kilitliyoruz
-    this.bot.setControlState("forward", true);
-    this.bot.setControlState("jump", true);
-    this.bot.setControlState("sprint", true);
+    try {
+      const portalBlocks = this.bot.findBlocks({
+        matching: (block) => block.name === 'nether_portal' || block.name === 'portal',
+        maxDistance: 32,
+        count: 1
+      });
 
-    // 5 saniye boyunca her fizik adımında bota "Portala Bak!" emri veriyoruz (Gözü kaymasın)
-    const lookInterval = setInterval(() => {
-      if (this.bot && this.bot.lookAt) {
-        this.bot.lookAt(targetPos.offset(0, 1, 0), true);
+      if (portalBlocks.length > 0) {
+        const foundPortalPos = portalBlocks[0];
+        console.log(color.green(`[DİNAMİK] Portal otomatik kodlandı! Hedef: X:${foundPortalPos.x} Y:${foundPortalPos.y} Z:${foundPortalPos.z}`));
+        
+        if (this.bot.ashfinder) {
+          const goal = new goals.GoalExact(foundPortalPos);
+          this.bot.ashfinder.goto(goal);
+          console.log(color.cyan(`[BARITONE] Akıllı yol bulma başlatıldı. Güvenli geçiş moduna giriliyor.`));
+
+          this.dynamicCheckInterval = setInterval(() => {
+            if (!this.bot || !this.bot.entity) return;
+            
+            const currentPos = this.bot.entity.position;
+            const distance = currentPos.distanceTo(foundPortalPos);
+
+            if (distance <= 1.3) {
+              clearInterval(this.dynamicCheckInterval);
+              this.clearAllMovements(); 
+              console.log(color.magenta(`[BAŞARILI] Portalın içine girildi ve heykel gibi donuldu. Aktarma bekleniyor...`));
+            }
+          }, 100);
+        } else {
+          this.walkToPortalBackup();
+        }
+      } else {
+        console.log(color.yellow(`[TARAYICI] Çevrede aktif portal bulunamadı, lobi yükleniyor olabilir. Tekrar denenecek.`));
+        this.portalTimeout = setTimeout(() => this.scanAndScanPortalWithBaritone(), 3000);
       }
-    }, 50);
+    } catch (err) {
+      console.log(color.red(`[HATA] Portal tarama motoru başarısız oldu.`));
+      this.walkToPortalBackup();
+    }
+  }
 
-    // 5 saniye sonra tuşları bırak ve portal içinde sabit kal
+  walkToPortalBackup() {
+    if (this.verifyRequired || this.currentState !== state.online) return;
+    this.bot.setControlState("forward", true);
     setTimeout(() => {
-      clearInterval(lookInterval);
       this.bot.setControlState("forward", false);
-      this.bot.setControlState("jump", false);
-      this.bot.setControlState("sprint", false);
-      console.log(color.magenta(`[PORTAL] Koşu bitti, portal merkezinde bekleniyor...`));
-    }, 5000);
+    }, 6000);
   }
 
   clearAllMovements() {
@@ -271,6 +311,7 @@ class BotInstance {
     this.currentState = state.reconnecting;
     
     this.clearAllMovements();
+    if (this.dynamicCheckInterval) clearInterval(this.dynamicCheckInterval);
     if (this.bot) {
       try { this.bot.end(); } catch (e) {}
     }
@@ -284,17 +325,17 @@ class BotInstance {
   }
 }
 
+// TERMUX ÜZERİNDEN CANLI CHAT VE KOMUT ARABİRİMİ
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
 });
 
-let activeBotInstance = null; 
-
 rl.on('line', async (line) => {
     const input = line.trim();
     if (!input || !activeBotInstance || !activeBotInstance.bot) return;
 
+    // Eğer başına # koyarsan Baritone'a komut gider. Örn: #stop
     if (input.startsWith('#')) {
         const args = input.substring(1).split(' ');
         const cmd = args[0].toLowerCase();
@@ -313,12 +354,15 @@ rl.on('line', async (line) => {
             console.log(color.red('[BARITONE HATA]'), err);
         }
     } else {
+        // Normal yazarsan direkt oyundaki chate fırlatır!
         activeBotInstance.bot.chat(input);
     }
 });
 
+let activeBotInstance = null; 
 module.exports = function(options) {
     const instance = new BotInstance(options);
     activeBotInstance = instance;
     return instance;
 };
+      
