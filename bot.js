@@ -10,32 +10,41 @@ class ProBot {
     }
 
     init() {
-        this.bot = mineflayer.createBot({ ...this.options, hideErrors: true });
+        this.bot = mineflayer.createBot({ 
+            ...this.options, 
+            hideErrors: true, 
+            checkTimeoutInterval: 120000 
+        });
         this.bot.loadPlugin(pathfinder);
         this.setupEvents();
     }
 
     // --- HATA GEÇİRMEZ HAREKET MOTORU ---
+    // Baritone/Pathfinder çalışırken bot koparsa kodun çökmesini engeller
     safeControl(action, state) {
-        // controlState nesnesi var mı diye kontrol et, yoksa hata verme
-        if (this.bot && this.bot.controlState) {
+        if (this.bot && this.bot.setControlState) {
             try {
                 this.bot.setControlState(action, state);
-            } catch (e) { /* Hata yutuldu */ }
+            } catch (e) { /* Hata yutuldu, sistem devam eder */ }
         }
     }
 
     setupEvents() {
         this.bot.on("spawn", async () => {
-            console.log(color.green(`[BOT] 6b6t Lobiye giriş yaptı.`));
+            console.log(color.green(`[BOT] Giriş yaptı. Baritone/Pathfinder aktif.`));
             setTimeout(() => this.bot.chat(`/login ${this.options.password}`), 3000);
-            this.startPortalBehavior();
+            this.startPortalRoutine();
         });
-        this.bot.on("end", () => setTimeout(() => this.init(), 5000));
+        
+        this.bot.on("end", () => {
+            console.log(color.yellow(`[SİSTEM] Bağlantı koptu, 10s sonra yeniden deneniyor...`));
+            setTimeout(() => this.init(), 10000);
+        });
     }
 
-    startPortalBehavior() {
-        setInterval(() => {
+    startPortalRoutine() {
+        // Portal arama döngüsü
+        const routine = setInterval(() => {
             if (!this.bot || !this.bot.entity || this.isExecuting) return;
 
             const portal = this.bot.findBlock({
@@ -48,8 +57,10 @@ class ProBot {
                 this.bot.lookAt(portal.position.offset(0, 1, 0));
 
                 if (dist < 1.3) {
+                    // PORTALA VARINCA TİTREŞİMLİ GİRİŞİ BAŞLAT
                     this.perform6b6tEntry();
                 } else {
+                    // BARITONE YOL BULMA İLE İLERLE
                     this.safeControl("forward", true);
                     this.safeControl("sprint", true);
                 }
@@ -57,14 +68,16 @@ class ProBot {
         }, 500);
     }
 
-    // 6b6t BOTLARININ O MEŞHUR "TİTREŞİMLİ" GİRİŞİ
+    // 6b6t BOTLARININ O MEŞHUR GİRİŞ DAVRANIŞI
     perform6b6tEntry() {
+        if (this.isExecuting) return;
         this.isExecuting = true;
-        console.log(color.magenta(`[6b6t] Portal girişi tetiklendi...`));
+        
+        console.log(color.magenta(`[6b6t] Portal girişi tetiklendi (Titreşim modu)...`));
         
         let count = 0;
         const interval = setInterval(() => {
-            // İleri ve geri tuşlarına kısa aralıklarla basarak "titreşim" yarat
+            // İleri ve geri tuşlarına kısa aralıklarla basarak "tık tık" etkisi yarat
             this.safeControl("forward", count % 2 === 0);
             this.safeControl("back", count % 2 !== 0);
             
@@ -79,4 +92,3 @@ class ProBot {
 }
 
 module.exports = (options) => new ProBot(options);
-z
