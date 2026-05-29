@@ -46,16 +46,16 @@ class BotInstance {
     const secureOptions = {
       ...this.botOptions,
       hideErrors: true,                
-      checkTimeoutInterval: 120 * 1000, // Zaman aşımı süresi yüksek tutulur (İnternet forumu tavsiyesi)
+      checkTimeoutInterval: 120 * 1000, 
       respawn: true,                   
       physicsEnabled: true,            
       resetErrorChannels: true,
-      skipValidation: true, // Hatalı paketleri sunucuya çaktırmadan yutar
+      skipValidation: true, 
       waitWindowCloseTimeout: 5000,
       chatSignature: false,
       clientSignature: false,
       brand: "vanilla",
-      viewDistance: "tiny" // Sunucudan az veri talep ederek donmayı önler
+      viewDistance: "tiny" 
     };
 
     this.bot = mineflayer.createBot(secureOptions);
@@ -64,21 +64,47 @@ class BotInstance {
   }
 
   registerEvents() {
-    // İNTERNET ÇÖZÜMÜ: Sunucu botu ana dünyaya aktarırken (respawn paketi attığında) 
-    // fizikleri güvenli bir şekilde kapatıp açarak "Internal Error" krizini önler.
-    this.bot._client.on('packet', (data, metadata) => {
-      // Boyut değiştirme veya konfigürasyona geri dönme paketleri yakalandığında
-      if (metadata.name === 'respawn' || metadata.name === 'start_configuration') {
-        this.isPortaling = true;
-        if (this.portalTimeout) clearTimeout(this.portalTimeout);
-        this.clearAllMovements();
-        
-        if (this.bot.physics) {
-          this.bot.physicsEnabled = false;
-          console.log(color.magenta(`[INTERNET BYPASS] Sunucu geçiş paketi (${metadata.name}) yakalandı. Fizik donduruldu.`));
+    // KESİN ÇÖZÜM: Sunucunun lobi-ana dünya arasındaki tüm geçiş aşamalarını el ile yönetiyoruz
+    if (this.bot._client) {
+      this.bot._client.on('packet', (data, metadata) => {
+        // 1. Aşama: Sunucu transferi başlattı
+        if (metadata.name === 'start_configuration') {
+          this.isPortaling = true;
+          if (this.portalTimeout) clearTimeout(this.portalTimeout);
+          this.clearAllMovements();
+          
+          if (this.bot.physics) {
+            this.bot.physicsEnabled = false;
+          }
+          console.log(color.magenta(`[GEÇİŞ] Yapılandırma başladı. Fizik motoru donduruldu.`));
         }
-      }
-    });
+
+        // 2. Aşama (TIKANMA NOKTASI): Sunucu yapılandırmayı bitirdiğini söylediğinde
+        // Botu zorla yeni dünyaya uyandırıyoruz ve el sıkışmayı tamamlıyoruz
+        if (metadata.name === 'finish_configuration') {
+          console.log(color.green(`[GEÇİŞ] Yapılandırma bitti! Sunucu el sıkışması onaylanıyor...`));
+          try {
+            // Sunucuya "Hazırım, beni ana dünyaya doğurt" paketini el ile fırlatıyoruz
+            this.bot._client.write('finish_configuration', {});
+          } catch (e) {
+            console.log(color.red(`[GEÇİŞ HATASI] Onay paketi gönderilemedi, otomatik geçiş bekleniyor.`));
+          }
+          
+          // Fizikleri 2 saniye sonra güvenle geri aç ki harita tam otursun
+          setTimeout(() => {
+            if (this.bot.physics) {
+              this.bot.physicsEnabled = true;
+              console.log(color.cyan(`[GEÇİŞ] Fizik motoru ana dünya için başarıyla serbest bırakıldı.`));
+            }
+          }, 2000);
+        }
+
+        // Kilitlenmeye sebep olan gereksiz imza paketlerini havada yutmaya devam
+        if (metadata.name === 'server_data' || metadata.name === 'player_chat_header' || metadata.name === 'bundle_delimiter') {
+          return true; 
+        }
+      });
+    }
 
     // RESOURCE PACK ONAYLAYICI
     this.bot.on('resourcePackSend', (url, hash, required, message) => {
@@ -118,7 +144,6 @@ class BotInstance {
 
       console.log(color.green(`[${this.botOptions.username}] Dünyaya giriş yaptı (Spawn: ${this.spawned})`));
 
-      // Dünyaya başarıyla spawn olunduğu an fizik motorunu güvenle tekrar aktif ediyoruz
       if (this.bot.physics) {
         this.bot.physicsEnabled = true;
       }
@@ -184,11 +209,6 @@ class BotInstance {
         console.log(color.red("\n========================================"));
         console.log(`⚠️  [${this.botOptions.username}] DOĞRULAMA GEREKLİ! OTOMATİK PORTAL DURDURULDU.`);
         console.log("========================================\n");
-      }
-
-      if (msg.includes("/register") && this.spawned == 1) {
-        console.log(color.red(`[HATA] ${this.botOptions.username} hesabı sunucuya kayıtlı değil veya şifre yanlış!`));
-        process.exit();
       }
     });
   }
